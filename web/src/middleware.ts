@@ -9,7 +9,13 @@ export default clerkMiddleware((auth, req) => {
   }
 });
 
-/** Must cover any route that calls `auth()` (including `/`) so Clerk can attach context. */
+/**
+ * Clerk-recommended matcher (skips static assets reliably on Vercel Edge).
+ * @see https://clerk.com/docs/references/nextjs/clerk-middleware
+ */
 export const config = {
-  matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"],
+  matcher: [
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+  ],
 };

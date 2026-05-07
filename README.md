@@ -104,8 +104,10 @@ Set these in **Vercel → Project → Settings → Environment Variables** (at m
 
 | Variable | Required | Notes |
 |----------|----------|--------|
-| **`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`** | Yes | Production: use **`pk_live_…`** from Clerk. |
-| **`CLERK_SECRET_KEY`** | Yes | Production: **`sk_live_…`**. Never expose client-side. |
+| **`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`** | Yes | On **`*.vercel.app`**, use Clerk **Development** keys (**`pk_test_…`**). **`pk_live_…`** only with a **custom domain** wired in Clerk ([Clerk on Vercel](https://clerk.com/docs/deployments/deploy-to-vercel), [instances](https://clerk.com/docs/guides/development/managing-environments)). |
+| **`CLERK_SECRET_KEY`** | Yes | Must match the same Clerk instance as the publishable key (**`sk_test_…`** or **`sk_live_…`**). Never expose client-side. |
+| **`NEXT_PUBLIC_CLERK_SIGN_IN_URL`** | No | Defaults work; set to **`/sign-in`** if sign-in routes 404 in production. |
+| **`NEXT_PUBLIC_CLERK_SIGN_UP_URL`** | No | Set to **`/sign-up`** if needed. |
 | **`DATABASE_URL`** | Yes | Turso **`libsql://…`** URL (same DB you use locally). |
 | **`TURSO_AUTH_TOKEN`** | Yes | DB auth token from Turso CLI / dashboard. |
 | **`TURSO_DATABASE_URL`** | No | Set only if you want the adapter URL separate from `DATABASE_URL`. |
@@ -118,7 +120,13 @@ Set these in **Vercel → Project → Settings → Environment Variables** (at m
 | **`OPENAI_API_KEY`** | No | OpenAI path when earlier tiers are unavailable. |
 | **`OPENAI_MODEL`** | No | Defaults to **`gpt-4o-mini`**. |
 
-After deploy: in **Clerk Dashboard → Configure → Domains / Paths**, add your **`*.vercel.app`** URL (and custom domain if any) to allowed **`redirect` / `authorized`** origins so sign-in works.
+After deploy: in **Clerk Dashboard → Configure → Paths**, ensure sign-in/sign-up paths match **`/sign-in`** and **`/sign-up`**. Under **Domains**, allow your deployment origin (e.g. **`https://your-app.vercel.app`**) if Clerk prompts for allowed origins / redirects.
+
+### Troubleshooting: 404 or “code not found” after deploy
+
+1. **Root Directory** must be **`web`** (otherwise the deployment is not a valid Next app).
+2. **Clerk keys:** If the site is on **`*.vercel.app`**, use **Development** instance keys (**`pk_test_` / `sk_test_`**). Using **Production** keys without a Clerk production domain often breaks auth and can surface as 404s or failed Clerk requests ([preview + `vercel.app`](https://clerk.com/docs/guides/development/managing-environments#preview-environments-2)).
+3. Redeploy after changing environment variables.
 
 Ensure your Turso database has schema applied once (**`npm run db:apply-turso`** against prod credentials locally, or run **`web/prisma/turso-init.sql`** on Turso).
 
