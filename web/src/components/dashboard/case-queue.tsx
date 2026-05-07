@@ -197,7 +197,6 @@ export function CaseQueue() {
             <p className="text-xs font-semibold uppercase tracking-widest text-sky-300/90">
               Patient RiskCalc
             </p>
-            <p className="text-[11px] text-slate-500">Care case cockpit</p>
           </div>
         </div>
         <Separator className="my-6 opacity-60" />
@@ -239,9 +238,6 @@ export function CaseQueue() {
             Opens in the main panel: your case queue or cohort insights (risk mix, trends, top signals).
           </p>
         </nav>
-        <div className="mt-auto rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-[11px] text-slate-500">
-          Mock demo · PHI-safe synthetic notes only.
-        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
