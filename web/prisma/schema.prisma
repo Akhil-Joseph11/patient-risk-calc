@@ -1,0 +1,29 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+  // Vercel (Node on Amazon Linux / OpenSSL 3) — avoids Prisma engine mismatch at runtime.
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model PatientCase {
+  id                String   @id @default(cuid())
+  clerkUserId       String
+  patientName       String
+  age               Int
+  clinicalNotes     String
+  tags              String   @default("[]")
+  assignedClinician String?
+  riskScore         Int
+  riskLevel         String
+  signals           String   @default("[]")
+  explanation       String
+  createdAt         DateTime @default(now())
+
+  @@index([clerkUserId])
+  @@index([clerkUserId, riskScore])
+}
