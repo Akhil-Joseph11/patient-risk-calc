@@ -12,6 +12,12 @@ const badgeVariants = cva(
         medium:
           "border-amber-400/35 bg-amber-500/15 text-amber-100 shadow-[0_0_18px_-8px_rgba(251,191,36,0.45)]",
         low: "border-emerald-400/30 bg-emerald-500/15 text-emerald-100 shadow-[0_0_18px_-8px_rgba(52,211,153,0.35)]",
+        reviewHigh:
+          "border-emerald-400/35 bg-emerald-500/12 text-emerald-100 normal-case tracking-normal shadow-none",
+        reviewMedium:
+          "border-amber-400/40 bg-amber-500/12 text-amber-100 normal-case tracking-normal shadow-none",
+        reviewNeed:
+          "border-violet-400/40 bg-violet-500/15 text-violet-100 normal-case tracking-normal shadow-none",
       },
     },
     defaultVariants: {

@@ -6,6 +6,13 @@ import { TrendingDown, TrendingUp, Minus } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { inferReviewStateFromConfidenceOnly, type ReviewStateLabel } from "@/lib/review-state";
+
+function effectiveReviewState(c: PatientCase): ReviewStateLabel {
+  const r = c.reviewState;
+  if (r === "high_confidence" || r === "medium_confidence" || r === "needs_human_review") return r;
+  return inferReviewStateFromConfidenceOnly(c.analysisConfidence);
+}
 
 function parseSignals(raw: string): string[] {
   try {
@@ -16,11 +23,32 @@ function parseSignals(raw: string): string[] {
   }
 }
 
+function parseEvidenceLabels(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const j = JSON.parse(raw) as unknown[];
+    if (!Array.isArray(j)) return [];
+    return j
+      .map((x) => {
+        if (x && typeof x === "object" && "label" in x) return String((x as { label?: string }).label ?? "");
+        return "";
+      })
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 type InsightsStats = {
   total: number;
   high: number;
   medium: number;
   low: number;
+  reviewNeedsHuman: number;
+  reviewHigh: number;
+  reviewMedium: number;
+  avgConfidence: number;
   topSignals: [string, number][];
   trendLabel: string;
   TrendIcon: typeof TrendingUp;
@@ -31,15 +59,28 @@ function computeInsights(cases: PatientCase[]): InsightsStats {
   let high = 0;
   let medium = 0;
   let low = 0;
+  let reviewNeedsHuman = 0;
+  let reviewHigh = 0;
+  let reviewMedium = 0;
+  let confSum = 0;
   for (const c of cases) {
     if (c.riskLevel === "High") high++;
     else if (c.riskLevel === "Medium") medium++;
     else if (c.riskLevel === "Low") low++;
+    const rv = effectiveReviewState(c);
+    if (rv === "needs_human_review") reviewNeedsHuman++;
+    else if (rv === "high_confidence") reviewHigh++;
+    else reviewMedium++;
+    confSum += c.analysisConfidence ?? 0;
   }
+  const avgConfidence = total ? Math.round(confSum / total) : 0;
 
   const counts = new Map<string, number>();
   for (const c of cases) {
-    for (const s of parseSignals(c.signals)) {
+    const labels = Array.from(
+      new Set([...parseSignals(c.signals), ...parseEvidenceLabels(c.signalEvidence)])
+    );
+    for (const s of labels) {
       const key = s.trim();
       if (!key) continue;
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -60,7 +101,7 @@ function computeInsights(cases: PatientCase[]): InsightsStats {
   let trendLabel = "";
   let TrendIcon: typeof TrendingUp = Minus;
   if (total === 0) {
-    trendLabel = "No cases yet — add or seed demo data to see trends.";
+    trendLabel = "No cases yet — add rows or load samples to see trends.";
   } else if (prevWeek === 0 && thisWeek > 0) {
     trendLabel = `${thisWeek} new case(s) in the last 7 days.`;
     TrendIcon = TrendingUp;
@@ -71,11 +112,23 @@ function computeInsights(cases: PatientCase[]): InsightsStats {
     trendLabel = `Down vs prior week (${thisWeek} vs ${prevWeek} new).`;
     TrendIcon = TrendingDown;
   } else {
-    trendLabel = `Steady cadence — ${thisWeek} case(s) added this week.`;
+    trendLabel = `${thisWeek} case(s) added this week (same as prior week).`;
     TrendIcon = Minus;
   }
 
-  return { total, high, medium, low, topSignals, trendLabel, TrendIcon };
+  return {
+    total,
+    high,
+    medium,
+    low,
+    reviewNeedsHuman,
+    reviewHigh,
+    reviewMedium,
+    avgConfidence,
+    topSignals,
+    trendLabel,
+    TrendIcon,
+  };
 }
 
 export function InsightsPanel({
@@ -115,20 +168,29 @@ export function InsightsPanel({
         </p>
         <ul className="mt-3 space-y-1.5 text-[13px] text-slate-300">
           <li className="flex justify-between gap-2">
-            <span>
-              High risk: <strong className="text-red-300">{stats.high}</strong> 🔴
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-red-400" aria-hidden />
+              <span>
+                High: <strong className="text-red-300">{stats.high}</strong>
+              </span>
             </span>
             {stats.total > 0 ? <span className="text-slate-500">{highPct}%</span> : null}
           </li>
           <li className="flex justify-between gap-2">
-            <span>
-              Medium risk: <strong className="text-amber-200">{stats.medium}</strong> 🟡
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden />
+              <span>
+                Medium: <strong className="text-amber-200">{stats.medium}</strong>
+              </span>
             </span>
             {stats.total > 0 ? <span className="text-slate-500">{medPct}%</span> : null}
           </li>
           <li className="flex justify-between gap-2">
-            <span>
-              Low risk: <strong className="text-emerald-300">{stats.low}</strong> 🟢
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" aria-hidden />
+              <span>
+                Low: <strong className="text-emerald-300">{stats.low}</strong>
+              </span>
             </span>
             {stats.total > 0 ? <span className="text-slate-500">{lowPct}%</span> : null}
           </li>
@@ -139,6 +201,28 @@ export function InsightsPanel({
             <div className="bg-red-400/90" style={{ width: `${highPct}%` }} />
             <div className="bg-amber-400/90" style={{ width: `${medPct}%` }} />
             <div className="bg-emerald-400/90" style={{ width: `${lowPct}%` }} />
+          </div>
+        ) : null}
+
+        {stats.total > 0 ? (
+          <div className="mt-4 border-t border-white/10 pt-3 text-[12px] text-slate-400">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Review & confidence</p>
+            <ul className="mt-2 space-y-1">
+              <li className="flex justify-between gap-2">
+                <span>Needs human review</span>
+                <strong className="text-violet-200">{stats.reviewNeedsHuman}</strong>
+              </li>
+              <li className="flex justify-between gap-2">
+                <span>High / medium confidence</span>
+                <span className="tabular-nums text-slate-300">
+                  {stats.reviewHigh} / {stats.reviewMedium}
+                </span>
+              </li>
+              <li className="flex justify-between gap-2">
+                <span>Avg extraction confidence</span>
+                <span className="tabular-nums text-slate-300">{stats.avgConfidence}/100</span>
+              </li>
+            </ul>
           </div>
         ) : null}
       </div>

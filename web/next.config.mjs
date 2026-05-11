@@ -7,8 +7,7 @@ const { loadEnvConfig } = nextEnv;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Load env from repo root first, then web/ (web overrides). Turso keys are often placed in the
-// wrong file (e.g. HealthLeap/.env instead of web/.env.local); this fixes missing process.env at runtime.
+// Load env from repo root, then web/ (web wins). Ensures Turso keys in the repo root are visible at runtime.
 loadEnvConfig(path.join(__dirname, ".."));
 loadEnvConfig(__dirname);
 
@@ -16,6 +15,16 @@ loadEnvConfig(__dirname);
 const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ["@prisma/client"],
+  },
+  webpack: (config, { isServer }) => {
+    // pdfjs-dist: drop optional canvas binding in the client bundle.
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        canvas: false,
+      };
+    }
+    return config;
   },
 };
 

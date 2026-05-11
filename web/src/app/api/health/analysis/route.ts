@@ -5,7 +5,7 @@ import { geminiAnalysisConfigured, groqAnalysisConfigured } from "@/lib/analysis
 
 export const dynamic = "force-dynamic";
 
-/** Which analyzer will run for case creation (no secrets exposed). */
+/** Active scoring path for new cases (no secrets). */
 export async function GET() {
   const groq = groqAnalysisConfigured();
   const gemini = geminiAnalysisConfigured();

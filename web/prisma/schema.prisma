@@ -1,7 +1,6 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
-  // Vercel (Node on Amazon Linux / OpenSSL 3) — avoids Prisma engine mismatch at runtime.
   binaryTargets   = ["native", "rhel-openssl-3.0.x"]
 }
 
@@ -10,20 +9,42 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Care queue row: signed-in users own by `clerkUserId`; guests own by `guestSessionId` cookie.
 model PatientCase {
-  id                String   @id @default(cuid())
-  clerkUserId       String
-  patientName       String
-  age               Int
-  clinicalNotes     String
-  tags              String   @default("[]")
-  assignedClinician String?
-  riskScore         Int
-  riskLevel         String
-  signals           String   @default("[]")
-  explanation       String
-  createdAt         DateTime @default(now())
+  id                  String   @id @default(cuid())
+  clerkUserId         String?
+  guestSessionId      String?
+  patientName         String
+  age                 Int
+  /// Canonical text used for extraction + scoring (post-OCR cleanup or pasted note).
+  clinicalNotes       String
+  /// Original user input before normalization (paste body or same as clinicalNotes).
+  rawDocumentText     String   @default("")
+  /// When ingestion used OCR, store the engine output separately for traceability.
+  ocrText             String?
+  ocrConfidence       Float?
+  /// paste | image | pdf
+  inputSource         String   @default("paste")
+  tags                String   @default("[]")
+  assignedClinician   String?
+  riskScore           Int
+  riskLevel           String
+  /// Human-readable signal labels (legacy list; also derivable from signalEvidence).
+  signals             String   @default("[]")
+  /// JSON: ClinicalSignalEvidence[] with source phrases / spans when available.
+  signalEvidence      String   @default("[]")
+  /// JSON: FHIR-inspired bundle (Patient, Encounter, Observations, etc.).
+  structuredRecord    String   @default("{}")
+  explanation         String
+  /// 0–100 heuristic confidence in the combined extraction + score (not clinical certainty).
+  analysisConfidence  Int      @default(72)
+  /// high_confidence | medium_confidence | needs_human_review (demo QA band).
+  reviewState         String   @default("medium_confidence")
+  /// JSON: ordered pipeline steps for explainability UI.
+  pipelineTrace       String   @default("[]")
+  createdAt           DateTime @default(now())
 
   @@index([clerkUserId])
+  @@index([guestSessionId])
   @@index([clerkUserId, riskScore])
 }

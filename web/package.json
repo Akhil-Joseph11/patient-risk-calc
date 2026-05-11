@@ -10,9 +10,13 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "prisma generate",
     "db:print-schema-sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
     "db:apply-turso": "tsx scripts/apply-turso-schema.ts",
+    "db:push": "tsx scripts/db-push.ts",
+    "db:sync-columns": "tsx scripts/sync-patient-case-columns.ts",
     "db:seed": "tsx prisma/seed.ts"
   },
   "prisma": {
@@ -38,11 +42,13 @@
     "lucide-react": "^1.14.0",
     "next": "^14.2.35",
     "openai": "^4.77.3",
+    "pdfjs-dist": "4.10.38",
     "prisma": "5.22.0",
     "react": "^18",
     "react-dom": "^18",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
+    "tesseract.js": "^5.1.1",
     "tsx": "^4.21.0"
   },
   "devDependencies": {
@@ -54,6 +60,7 @@
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.1.4"
   }
 }

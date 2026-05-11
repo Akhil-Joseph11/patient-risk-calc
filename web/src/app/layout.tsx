@@ -19,7 +19,7 @@ const jetMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Patient RiskCalc — Care case prioritization",
   description:
-    "Clinician workflow demo for assigned patient cases, clinical notes, and explainable risk scoring.",
+    "Clinical notes to structured signals, FHIR-shaped records, and explainable risk scoring for care triage.",
   icons: {
     icon: "/favicon.svg",
   },

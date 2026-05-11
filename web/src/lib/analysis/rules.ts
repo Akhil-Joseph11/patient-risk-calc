@@ -35,7 +35,7 @@ const RULES: SignalRule[] = [
   },
   {
     label: "Nausea, vomiting, or GI distress",
-    patterns: [/\b(nausea|vomiting|emesis)\b/i, /\b(dyspepsia|abdominal\s+pain)\b/i],
+    patterns: [/\b(nausea|vomiting|emesis)\b/i, /\bn\/v\b/i, /\b(dyspepsia|abdominal\s+pain)\b/i],
     weight: 15,
   },
   {

@@ -9,18 +9,20 @@ export const GROQ_API_BASE_DEFAULT = "https://api.groq.com/openai/v1";
 export const GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
 const LLM_JSON_TASK =
-  "You are a clinical documentation assistant for a prioritization demo (not a diagnosis). " +
+  "You are a clinical documentation assistant for case prioritization (not for diagnosis). " +
   "From the note, extract short signal labels (e.g. weight loss, poor appetite). " +
   "Return strict JSON only with keys: signals (array of strings), risk_score (integer 0-100), " +
   "explanation (string). " +
   "signals MUST be a non-empty array with at least one concise label (never [] or null). " +
-  "Keep explanation under 120 words; cite themes from the note; do not invent facts beyond the note. " +
-  "Include one concise clause that ties the integer risk_score to the strongest documented findings " +
-  "(severity, count of problems, acuity, negations).";
+  "The explanation string should be roughly 180–380 words: several paragraphs are fine (use \\n\\n between paragraphs). " +
+  "Write in neutral clinician handoff voice—what is documented, what is unclear, trajectory, and sensible follow-up urgency implied by the text only. " +
+  "Do not mention software, JSON, APIs, models, algorithms, blending weights, pipelines, or how the score is computed. " +
+  "Do not invent facts beyond the note; if information is missing, say so explicitly. " +
+  "The prose should naturally align with the integer risk_score you chose (more documented acute or overlapping problems justify higher scores; negations and reassuring language justify lower scores).";
 
 const RISK_SCORING_PROTOCOL =
   "risk_score is ONE integer 0-100 representing documented clinical concern and how soon review would " +
-  "typically be warranted in this triage-style demo (not a formal diagnosis, prognosis, or calibrated " +
+  "typically be warranted in this triage-style workflow (not a formal diagnosis, prognosis, or calibrated " +
   "clinical prediction). Anchor ONLY on facts explicitly written—do not invent problems or severity. " +
   "Precision: choose a specific integer (e.g. 43, 57, 71), not a generic round placeholder; avoid " +
   "multiples of 5 or 10 unless the wording clearly sits at a band boundary. Small differences of a few " +
@@ -40,5 +42,4 @@ const RISK_SCORING_PROTOCOL =
   "Malnutrition risk, infection flags, and functional decline matter when documented; negated findings " +
   "must reduce the relevant concern.";
 
-/** Shared across Groq, Gemini, OpenAI */
 export const LLM_SYSTEM = `${LLM_JSON_TASK} ${RISK_SCORING_PROTOCOL}`;

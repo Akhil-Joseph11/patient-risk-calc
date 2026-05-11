@@ -6,7 +6,7 @@ export async function runRiskAnalysis(clinicalNotes: string): Promise<RiskAnalys
     return await analyzeNotes(clinicalNotes);
   } catch (err) {
     if (process.env.NODE_ENV === "development") {
-      console.warn("[Patient RiskCalc] analyzeNotes failed — using keyword fallback.", err);
+      console.warn("analyzeNotes failed; using rules fallback.", err);
     }
     return analyzeWithRules(clinicalNotes);
   }

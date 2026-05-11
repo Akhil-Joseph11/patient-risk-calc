@@ -31,7 +31,7 @@ export function toRiskAnalysis(r: AnalysisResultInternal): RiskAnalysis {
   };
 }
 
-/** Deterministic keyword / regex scoring (final cascade step). */
+/** Keyword and pattern-based scoring (rules cascade). */
 export function analyzeWithRules(notes: string): RiskAnalysis {
   return toRiskAnalysis(analyzeWithRulesRaw(notes));
 }
@@ -132,7 +132,9 @@ async function analyzeWithGroq(notes: string): Promise<AnalysisResultInternal> {
       requireExplicitRiskScore: true,
     });
   } catch (exc) {
-    console.warn("Groq response missing or invalid risk_score; using rules.", exc);
+    if (process.env.NODE_ENV === "development") {
+      console.warn("Groq: invalid risk_score in response; using rules.", exc);
+    }
     return analyzeWithRulesRaw(notes);
   }
 }
@@ -175,7 +177,7 @@ async function analyzeWithOpenAI(notes: string): Promise<AnalysisResultInternal>
   return analysisFromLlmJson(raw, notes, { preserveLlmOutput: true });
 }
 
-/** Groq → Gemini → OpenAI → deterministic rules. */
+/** Provider cascade: Groq, Gemini, OpenAI, then rules. */
 export async function analyzeNotes(notes: string): Promise<RiskAnalysis> {
   const text = notes.trim();
 
@@ -183,7 +185,9 @@ export async function analyzeNotes(notes: string): Promise<RiskAnalysis> {
     try {
       return toRiskAnalysis(await analyzeWithGroq(text));
     } catch (exc) {
-      console.warn("Groq failed; trying next analyzer.", exc);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Groq failed; trying next provider.", exc);
+      }
     }
   }
 
@@ -191,7 +195,9 @@ export async function analyzeNotes(notes: string): Promise<RiskAnalysis> {
     try {
       return toRiskAnalysis(await analyzeWithGemini(text));
     } catch (exc) {
-      console.warn("Gemini failed; trying next analyzer.", exc);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Gemini failed; trying next provider.", exc);
+      }
     }
   }
 
@@ -199,7 +205,9 @@ export async function analyzeNotes(notes: string): Promise<RiskAnalysis> {
     try {
       return toRiskAnalysis(await analyzeWithOpenAI(text));
     } catch (exc) {
-      console.warn("OpenAI failed; using rules fallback.", exc);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("OpenAI failed; using rules fallback.", exc);
+      }
     }
   }
 

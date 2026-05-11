@@ -1,30 +1,29 @@
 # Patient RiskCalc
 
-**Patient RiskCalc** is a clinician-facing demo for prioritizing **assigned patient cases** from unstructured **clinical notes**. Signed-in users see **only their own care cases**, run **risk analysis** (Groq-first when configured, then Gemini, OpenAI, or deterministic rules—all on the Next.js server), and review **explainable signals** plus **risk scores** in a dark, investor-demo-ready UI.
+**Patient RiskCalc** is a clinician-facing demo for triaging **patient cases** from unstructured **clinical notes**: paste or browser-side PDF/image text extraction, **rules-first extraction** with evidence phrases, a **FHIR-shaped bundle**, and **risk scoring**. **Guest mode** uses an empty queue until you add cases or choose **Load samples**; **signed-in** users (Clerk) persist rows on Turso (`clerkUserId`).
 
 ## Architecture
 
 | Layer | Role |
 |-------|------|
-| **`web/`** — Next.js 14 (App Router) | Clerk auth, **Turso (libSQL)** persistence via Prisma + driver adapter—case rows are not stored in a local SQLite file. Dashboard UI (Tailwind + Radix + Motion); routes scoped by `clerkUserId`. **Clinical note analysis** runs in Node API routes (`web/src/lib/analysis/*`): Groq → Gemini → OpenAI → keyword/rules fallback—same cascade as the former Python service. |
+| **`web/`** — Next.js 14 (App Router) | **Guest-first** dashboard (optional Clerk). **Turso (libSQL)** via Prisma + driver adapter. Cases scoped by **`clerkUserId`** or **`guestSessionId`** cookie. **Ingestion**: PDF text + image OCR run **in the browser** (`pdfjs-dist`, `tesseract.js` via dynamic import); **`POST /api/cases`** accepts JSON text only (Vercel-friendly, no server binary pipeline for the demo path). **Pipeline**: rules extraction + FHIR-shaped bundle + risk (`web/src/lib/pipeline/*`, `web/src/lib/healthcare/*`); optional LLM blend (Groq → Gemini → OpenAI) in `web/src/lib/analysis/analyze-notes.ts`. |
 
 ## How auth works
 
 1. Create a Clerk application at [Clerk Dashboard](https://dashboard.clerk.com/).
 2. Copy **`web/.env.example`** → **`web/.env.local`** and fill Clerk keys plus **Turso** (`DATABASE_URL`, **`TURSO_AUTH_TOKEN`**—see Database section). Add optional LLM keys for Groq/Gemini/OpenAI on the **web** app env (server-only—never `NEXT_PUBLIC_` for API keys).
-3. **Middleware** (`web/src/middleware.ts`) protects **`/dashboard`** with `auth().protect()`.
-4. **API routes** (`/api/cases/*`) call `auth()` and return **401** without a session.
+3. **Middleware** (`web/src/middleware.ts`) runs Clerk for optional auth; **`/dashboard` is not gated** so guests can use the app immediately.
+4. **API routes** (`/api/cases/*`) scope rows by **Clerk `userId`** when present, otherwise by **guest session cookie**. No 401 for browsing the guest queue.
 
 Sign-in/up components redirect to **`/dashboard`** after authentication.
 
 ## Case scoping (security model)
 
-- Each **`PatientCase`** row includes **`clerkUserId`** from Clerk’s `auth().userId`.
-- **GET `/api/cases`** → `WHERE clerkUserId = currentUser`.
-- **POST `/api/cases`** → inserts with `clerkUserId = currentUser`.
-- **GET `/api/cases/[id]`** → fetch **only** if `clerkUserId` matches.
+- **Signed in:** each row has **`clerkUserId`**; APIs filter `WHERE clerkUserId = currentUser`.
+- **Guest:** rows use **`guestSessionId`** (httpOnly cookie); another browser session cannot read them unless the cookie is shared.
+- **GET `/api/cases/[id]`** enforces the same owner filter.
 
-There is **no** shared global queue—another clinician’s cases are invisible.
+There is **no** shared global queue across different Clerk users or unrelated guest cookies.
 
 ## Risk scoring
 
@@ -76,18 +75,23 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:3000** → sign in → **Dashboard**.
+Open **http://localhost:3000** → **Continue as guest** or sign in → **Dashboard**.
+
+**Ingestion in dev:** PDF text and image OCR run in the **browser** (see `web/src/lib/client-ingestion/`). Saving a case sends **JSON** to **`POST /api/cases`**; the server runs extraction and persistence only.
+
+**Schema changes:** after pulling updates, from **`web/`** run **`npm run db:push`** (syncs missing `PatientCase` columns on Turso via `libsql://`). For an empty DB you can still use **`npm run db:apply-turso`**. Prisma CLI `db push` alone does not apply to remote Turso URLs with `provider = "sqlite"` — the repo script handles that.
 
 ### Demo seed data
 
-- **Load demo cases** on the empty state (**`POST /api/cases/seed-demo`**), or
+- **Load samples** on an empty workspace (**`POST /api/cases/seed-demo`**), or
 - **`npm run db:seed`** with **`SEED_CLERK_USER_ID`** set (and Turso in **`web/.env`**).
 
 ## Tradeoffs
 
 - **Turso + Prisma libSQL adapter**: no on-disk case DB in the app; schema changes via SQL from **`db:print-schema-sql`** + apply on Turso.
 - **Server-side LLM calls**: keys stay on the host (e.g. Vercel env); no separate analysis microservice.
-- **Demo-only**: synthetic notes; not for real PHI or clinical decisions.
+- **Browser OCR / PDF**: keeps serverless functions small; Tesseract and PDF.js workers load from CDNs, so offline or strict CSP environments may need adjustment.
+- **Demo-only**: sample notes; not for real PHI or clinical decisions.
 
 ## Deploy on Vercel (GitHub)
 
@@ -96,7 +100,8 @@ The Next.js app is a normal **Next.js 14** deploy: connect the repo, point Verce
 1. **GitHub → Vercel:** New Project → Import repo → **Root Directory:** `web` (monorepo).
 2. **Build:** Default `npm run build` (`prisma generate && next build`) is correct; `postinstall` also runs `prisma generate`.
 3. **Runtime:** API routes use the **Node.js** runtime (default); Prisma + Turso libSQL client work on Vercel. **`schema.prisma`** includes **`binaryTargets`** for **`rhel-openssl-3.0.x`** so the query engine matches Vercel’s Linux hosts after **`npm run build`**.
-4. **Analysis:** add **`GROQ_API_KEY`** (and/or Gemini/OpenAI keys) to Vercel env for LLM-backed scoring. Without them, the app uses the deterministic rules engine only.
+4. **Document OCR / PDF:** no extra Vercel config — workers load from CDNs; parsing stays off the serverless request path until the user saves text.
+5. **Analysis:** add **`GROQ_API_KEY`** (and/or Gemini/OpenAI keys) to Vercel env for LLM-backed scoring. Without them, the app uses the deterministic rules engine only.
 
 ### Environment variables on Vercel
 
