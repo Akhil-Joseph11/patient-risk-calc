@@ -1,140 +1,141 @@
 # Patient RiskCalc
 
-**Patient RiskCalc** is a clinician-facing demo for triaging **patient cases** from unstructured **clinical notes**: paste or browser-side PDF/image text extraction, **rules-first extraction** with evidence phrases, a **FHIR-shaped bundle**, and **risk scoring**. **Guest mode** uses an empty queue until you add cases or choose **Load samples**; **signed-in** users (Clerk) persist rows on Turso (`clerkUserId`).
+Patient RiskCalc is a small Next.js application built around a single idea: take messy clinical note text, run a consistent extraction and scoring pass on the server, and show the result in a form that resembles how triage tools are reviewed in practice—risk level, short rationale, evidence tied back to the note, and a structured record you can inspect like a chart abstract. It is intended for evaluation and workflow exploration, not as a regulated clinical product.
 
-## Architecture
+The runnable code lives under **`web/`** (that folder is the deployable unit on Vercel).
 
-| Layer | Role |
-|-------|------|
-| **`web/`** — Next.js 14 (App Router) | **Guest-first** dashboard (optional Clerk). **Turso (libSQL)** via Prisma + driver adapter. Cases scoped by **`clerkUserId`** or **`guestSessionId`** cookie. **Ingestion**: PDF text + image OCR run **in the browser** (`pdfjs-dist`, `tesseract.js` via dynamic import); **`POST /api/cases`** accepts JSON text only (Vercel-friendly, no server binary pipeline for the demo path). **Pipeline**: rules extraction + FHIR-shaped bundle + risk (`web/src/lib/pipeline/*`, `web/src/lib/healthcare/*`); optional LLM blend (Groq → Gemini → OpenAI) in `web/src/lib/analysis/analyze-notes.ts`. |
+---
 
-## How auth works
+## System shape
 
-1. Create a Clerk application at [Clerk Dashboard](https://dashboard.clerk.com/).
-2. Copy **`web/.env.example`** → **`web/.env.local`** and fill Clerk keys plus **Turso** (`DATABASE_URL`, **`TURSO_AUTH_TOKEN`**—see Database section). Add optional LLM keys for Groq/Gemini/OpenAI on the **web** app env (server-only—never `NEXT_PUBLIC_` for API keys).
-3. **Middleware** (`web/src/middleware.ts`) runs Clerk for optional auth; **`/dashboard` is not gated** so guests can use the app immediately.
-4. **API routes** (`/api/cases/*`) scope rows by **Clerk `userId`** when present, otherwise by **guest session cookie**. No 401 for browsing the guest queue.
+The app is **Next.js 14** with the App Router. The UI is server-rendered where it makes sense and uses client components for the dashboard, dialogs, and anything that touches the file APIs.
 
-Sign-in/up components redirect to **`/dashboard`** after authentication.
+**Persistence** goes through **Prisma** to **Turso** (remote libSQL) in the usual deployment. There is no checked-in database file; **`DATABASE_URL`** is normally a **`libsql://…`** URL with a token. A local **`file:`** SQLite URL is still supported for experiments—**`npm run db:push`** runs **`prisma db push`** in that case instead of the Turso column-sync script.
 
-## Case scoping (security model)
+**Clerk** handles sign-in when you want accounts. It is not required to open the dashboard. Middleware still runs Clerk so session helpers work on API routes, but the product is deliberately usable without creating an account first.
 
-- **Signed in:** each row has **`clerkUserId`**; APIs filter `WHERE clerkUserId = currentUser`.
-- **Guest:** rows use **`guestSessionId`** (httpOnly cookie); another browser session cannot read them unless the cookie is shared.
-- **GET `/api/cases/[id]`** enforces the same owner filter.
+---
 
-There is **no** shared global queue across different Clerk users or unrelated guest cookies.
+## User flow, end to end
 
-## Risk scoring
+### Landing and workspace
 
-Analysis runs **inside Next.js** (`web/src/lib/analysis/analyze-notes.ts`) when creating cases (`POST /api/cases`, seed-demo).
+Someone lands on `/`. If they already have a Clerk session they go straight to `/dashboard`. Otherwise they can open the dashboard as a **guest**.
 
-1. **Groq** when **`GROQ_API_KEY`** is set (OpenAI-compatible API; default model `llama-3.3-70b-versatile`).
-2. Else **Gemini** when **`GEMINI_API_KEY`** or **`GOOGLE_API_KEY`** is set (default model id `gemini-flash-latest`, overridable via **`GEMINI_MODEL`**).
-3. Else **OpenAI** when **`OPENAI_API_KEY`** is set (default **`OPENAI_MODEL`** `gpt-4o-mini`).
-4. Else **deterministic keyword/rules** (always available).
+Guests do not get pre-filled cases. The first time the client calls **`GET /api/cases`**, the server may mint a new anonymous workspace id, set it on an **httpOnly** cookie (`prc_guest_sid`), and return an empty list (or whatever that guest has already saved). From there they either add their own case, or use **Load samples** to pull in a fixed set of seed rows from `web/src/lib/demo-cases.ts` via **`POST /api/cases/seed-demo`** when the workspace is still empty.
 
-Invalid Groq JSON / missing `risk_score` falls back to rules for that request only; other providers fall through the cascade on errors.
+Signed-in users see only rows whose **`clerkUserId`** matches their Clerk id. Guests see only rows whose **`guestSessionId`** matches their cookie. Those two populations are not merged.
 
-**Diagnostics:** **`GET /api/health/analysis`** (no auth) reports which tier would run first.
+### Adding a case
 
-Configure keys in **`web/.env.local`** (see **`web/.env.example`**).
+The dashboard has a **New case** flow. The operator enters patient name and age, then either pastes note text or switches to **upload**.
 
-## Database (Turso only)
+**Paste** is straightforward: the text you type is what the server analyzes.
 
-Patient case data is stored only on **Turso** (remote libSQL). **`DATABASE_URL=file:…` is not supported** in the app.
+**Upload** is handled almost entirely in the browser. PDFs go through **pdf.js** (dynamic import, worker from a CDN). Images go through **Tesseract** the same way. The UI shows progress while that runs. The important part for hosting is that the server is not asked to accept a multipart upload and run OCR in a serverless function; instead the client sends **JSON** to **`POST /api/cases`** with `clinicalNotes`, optional `rawDocumentText`, optional `ocrText` / `ocrConfidence`, and `inputSource` (`paste` | `pdf` | `image`). That keeps the default path small and predictable on Vercel.
 
-Set in **`web/.env.local`** (or **`web/.env`**). Next also loads **`HealthLeap/.env`** from the repo root via **`next.config.mjs`** so Turso keys one level up are picked up. **Restart `npm run dev`** after changing env. For **`npm run db:seed`**, use **`web/.env`** or export vars in the shell (Prisma does not read `.env.local` by default).
+After extraction the user can edit the text before saving, which matters when OCR is imperfect.
 
-| Variable | Purpose |
-|----------|---------|
-| **`DATABASE_URL`** | Your **`libsql://…`** URL from Turso (required for `prisma/schema.prisma` and should match the DB you use at runtime). |
-| **`TURSO_DATABASE_URL`** | Optional; if set, used as the libSQL connection URL (otherwise **`DATABASE_URL`** when it is **`libsql://`**). |
-| **`TURSO_AUTH_TOKEN`** | Required — Turso CLI: `turso db tokens create` for your database name. |
+### What happens when a case is saved
 
-**Create tables on a new Turso database** (required once per empty DB):
+`POST /api/cases` validates the payload, resolves the owner (Clerk user or guest session), then calls **`persistAnalyzedCase`** in `web/src/lib/cases/persist-patient-case.ts`.
 
-```bash
-cd web
-npm run db:apply-turso
-```
+That helper runs **`runFullClinicalPipeline`** (`web/src/lib/pipeline/full-clinical-pipeline.ts`). In order:
 
-This reads **`web/.env.local`** and runs **`prisma/turso-init.sql`** (idempotent). Alternatively: **`npm run db:print-schema-sql`** and paste/run that SQL in the Turso dashboard.
+1. **Signal extraction** — `extractClinicalSignals` in `web/src/lib/extraction/clinical-signals.ts` applies deterministic patterns to the canonical note and returns structured rows with labels, evidence phrases, and spans when the match allows it.
 
-If you see **`no such table: main.PatientCase`** or **`SQLITE_UNKNOWN`**, run **`npm run db:apply-turso`** again after confirming Turso env vars.
+2. **Rules scoring** — `analyzeWithRules` / `rules.ts` produces a baseline integer score and human-readable signal labels from overlapping keyword logic (including simple negation handling where it matters, e.g. fever language).
 
-## Run locally
+3. **Optional remote scoring** — If any of Groq, Gemini, or OpenAI keys are present in the server environment, `analyzeNotes` tries providers in that order. On success the pipeline **blends** the rules score with the model’s numeric score and may take the model’s signal list and explanation text. If every configured path fails, the rules output stands alone. The stored field **`scoringMethod`** records whether enrichment ran.
 
-```bash
-cd web
-cp .env.example .env.local
-# Clerk + Turso + optional GROQ_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY
+4. **Bundle assembly** — `buildClinicalBundle` maps those signals into a **FHIR-inspired** JSON bundle (Patient, Encounter, ClinicalNote, observations, conditions, medication statements, risk assessment). This is not a certified FHIR server; the types live under `web/src/lib/healthcare/` and exist so the drawer can show something close to how structured data is usually grouped.
 
-cp .env.local .env   # same vars for prisma generate / db:seed
-npm install
-npm run dev
-```
+5. **Evidence enrichment** — `enrichSignalsForPersistence` tags each signal with where its evidence came from (rules path, document capture path, enrichment path) and aligns highlight spans to the raw document string the UI uses.
 
-Open **http://localhost:3000** → **Continue as guest** or sign in → **Dashboard**.
+6. **Review state** — `deriveCaseReviewState` assigns a coarse review band from heuristics (documentation ambiguity, confidence, etc.). It is a product convenience, not a clinical validation layer.
 
-**Ingestion in dev:** PDF text and image OCR run in the **browser** (see `web/src/lib/client-ingestion/`). Saving a case sends **JSON** to **`POST /api/cases`**; the server runs extraction and persistence only.
+7. **Pipeline trace** — `buildClinicalPipelineTrace` writes an ordered list of steps (input length, optional OCR modality, extraction count, bundle size, score band, explanation source) so the detail view can show how the row was produced without opening the code.
 
-**Schema changes:** after pulling updates, from **`web/`** run **`npm run db:push`** (syncs missing `PatientCase` columns on Turso via `libsql://`). For an empty DB you can still use **`npm run db:apply-turso`**. Prisma CLI `db push` alone does not apply to remote Turso URLs with `provider = "sqlite"` — the repo script handles that.
+8. **Persist** — One Prisma `create` writes the row, including JSON columns for `signalEvidence`, `structuredRecord`, and `pipelineTrace`.
 
-### Demo seed data
+### Reading a case back
 
-- **Load samples** on an empty workspace (**`POST /api/cases/seed-demo`**), or
-- **`npm run db:seed`** with **`SEED_CLERK_USER_ID`** set (and Turso in **`web/.env`**).
+Opening a row loads **`GET /api/cases/[id]`** with the same owner filter. The sheet shows the pipeline trace first, then signals and evidence, labels, explanation, the highlighted note, optional OCR copy, the canonical note, and a collapsible JSON view of the bundle. Insights on the dashboard are simple aggregates over whatever cases are already loaded for that workspace.
 
-## Tradeoffs
+---
 
-- **Turso + Prisma libSQL adapter**: no on-disk case DB in the app; schema changes via SQL from **`db:print-schema-sql`** + apply on Turso.
-- **Server-side LLM calls**: keys stay on the host (e.g. Vercel env); no separate analysis microservice.
-- **Browser OCR / PDF**: keeps serverless functions small; Tesseract and PDF.js workers load from CDNs, so offline or strict CSP environments may need adjustment.
-- **Demo-only**: sample notes; not for real PHI or clinical decisions.
+## Where the important code sits
 
-## Deploy on Vercel (GitHub)
+| Area | Path | Role |
+|------|------|------|
+| Case HTTP API | `web/src/app/api/cases/` | List, create, optional seed, single-case access |
+| Guest cookie helpers | `web/src/lib/guest-session.ts` | Read/write `prc_guest_sid` |
+| DB client | `web/src/lib/db.ts`, `web/src/lib/prisma-client-factory.ts` | Lazy Prisma + libSQL adapter |
+| Pipeline orchestration | `web/src/lib/pipeline/full-clinical-pipeline.ts` | Extraction → score → bundle → enrich → review → trace |
+| Trace strings | `web/src/lib/pipeline/clinical-trace.ts` | Step titles and copy for the drawer |
+| Rules engine | `web/src/lib/analysis/rules.ts` | Patterns, weights, baseline explanation |
+| Provider cascade | `web/src/lib/analysis/analyze-notes.ts` | Groq → Gemini → OpenAI → rules |
+| System prompt | `web/src/lib/analysis/constants.ts` | Shared instruction block for JSON responses |
+| Browser OCR/PDF | `web/src/lib/client-ingestion/` | Tesseract + pdf.js, size limits, MIME fallbacks |
+| Dashboard UI | `web/src/components/dashboard/` | Queue, detail sheet, insights, new-case dialog |
+| Schema | `web/prisma/schema.prisma` | `PatientCase` and indexes |
 
-The Next.js app is a normal **Next.js 14** deploy: connect the repo, point Vercel at the **`web/`** folder, set env vars, push to `main` (or enable Preview for PRs).
+---
 
-1. **GitHub → Vercel:** New Project → Import repo → **Root Directory:** `web` (monorepo).
-2. **Build:** Default `npm run build` (`prisma generate && next build`) is correct; `postinstall` also runs `prisma generate`.
-3. **Runtime:** API routes use the **Node.js** runtime (default); Prisma + Turso libSQL client work on Vercel. **`schema.prisma`** includes **`binaryTargets`** for **`rhel-openssl-3.0.x`** so the query engine matches Vercel’s Linux hosts after **`npm run build`**.
-4. **Document OCR / PDF:** no extra Vercel config — workers load from CDNs; parsing stays off the serverless request path until the user saves text.
-5. **Analysis:** add **`GROQ_API_KEY`** (and/or Gemini/OpenAI keys) to Vercel env for LLM-backed scoring. Without them, the app uses the deterministic rules engine only.
+## Configuration and operations (short)
 
-### Environment variables on Vercel
+You need a Turso database and env vars as in **`web/.env.example`**: a **`libsql://…`** URL (often **`DATABASE_URL`**, or **`TURSO_DATABASE_URL`** with the same value) plus **`TURSO_AUTH_TOKEN`**. Clerk keys are required if you use sign-in; for guest-only local runs you can still point Prisma at Turso. Optional **`GROQ_API_KEY`**, **`GEMINI_API_KEY`** or **`GOOGLE_API_KEY`**, or **`OPENAI_API_KEY`** turn on the enrichment path described above.
 
-Set these in **Vercel → Project → Settings → Environment Variables** (at minimum for **Production**; repeat for **Preview** if you want PR previews to work end-to-end).
+`next.config.mjs` loads env from the **repository root** and then **`web/`**, so a Turso block in a parent `.env` is picked up during `next dev` and builds.
 
-| Variable | Required | Notes |
-|----------|----------|--------|
-| **`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`** | Yes | On **`*.vercel.app`**, use Clerk **Development** keys (**`pk_test_…`**). **`pk_live_…`** only with a **custom domain** wired in Clerk ([Clerk on Vercel](https://clerk.com/docs/deployments/deploy-to-vercel), [instances](https://clerk.com/docs/guides/development/managing-environments)). |
-| **`CLERK_SECRET_KEY`** | Yes | Must match the same Clerk instance as the publishable key (**`sk_test_…`** or **`sk_live_…`**). Never expose client-side. |
-| **`NEXT_PUBLIC_CLERK_SIGN_IN_URL`** | No | Defaults work; set to **`/sign-in`** if sign-in routes 404 in production. |
-| **`NEXT_PUBLIC_CLERK_SIGN_UP_URL`** | No | Set to **`/sign-up`** if needed. |
-| **`DATABASE_URL`** | Yes | Turso **`libsql://…`** URL (same DB you use locally). |
-| **`TURSO_AUTH_TOKEN`** | Yes | DB auth token from Turso CLI / dashboard. |
-| **`TURSO_DATABASE_URL`** | No | Set only if you want the adapter URL separate from `DATABASE_URL`. |
-| **`LIBSQL_AUTH_TOKEN`** | No | Alias Turso reads in some setups; app prefers **`TURSO_AUTH_TOKEN`**. |
-| **`GROQ_API_KEY`** | No | Groq Cloud API key for primary LLM path (server-only). |
-| **`GROQ_MODEL`** | No | Defaults to **`llama-3.3-70b-versatile`**. |
-| **`GROQ_API_BASE`** | No | Defaults to Groq OpenAI-compatible base URL. |
-| **`GEMINI_API_KEY`** / **`GOOGLE_API_KEY`** | No | For Gemini path when Groq is absent or fails. |
-| **`GEMINI_MODEL`** | No | Defaults to **`gemini-flash-latest`**. |
-| **`OPENAI_API_KEY`** | No | OpenAI path when earlier tiers are unavailable. |
-| **`OPENAI_MODEL`** | No | Defaults to **`gpt-4o-mini`**. |
+First-time schema on an empty Turso DB: from **`web/`**, **`npm run db:apply-turso`** applies **`prisma/turso-init.sql`** via **`scripts/apply-turso-schema.ts`**. If the remote DB predates a schema change, **`npm run db:push`** runs **`scripts/db-push.ts`**, which on `libsql://` URLs executes the idempotent **`scripts/sync-patient-case-columns.ts`** path (and uses **`prisma db push`** for local `file:` SQLite only).
 
-After deploy: in **Clerk Dashboard → Configure → Paths**, ensure sign-in/sign-up paths match **`/sign-in`** and **`/sign-up`**. Under **Domains**, allow your deployment origin (e.g. **`https://your-app.vercel.app`**) if Clerk prompts for allowed origins / redirects.
+**Deploy:** Vercel project root **`web`**, same env surface as production. Tesseract and pdf.js workers load from public CDNs in the browser; no extra Vercel config is required for that path.
 
-### Troubleshooting: 404 or “code not found” after deploy
+**`GET /api/health/analysis`** returns which scoring tier would run first (booleans and model ids only—no secrets).
 
-1. **Root Directory** must be **`web`** (otherwise the deployment is not a valid Next app).
-2. **Clerk keys:** If the site is on **`*.vercel.app`**, use **Development** instance keys (**`pk_test_` / `sk_test_`**). Using **Production** keys without a Clerk production domain often breaks auth and can surface as 404s or failed Clerk requests ([preview + `vercel.app`](https://clerk.com/docs/guides/development/managing-environments#preview-environments-2)).
-3. Redeploy after changing environment variables.
+---
 
-Ensure your Turso database has schema applied once (**`npm run db:apply-turso`** against prod credentials locally, or run **`web/prisma/turso-init.sql`** on Turso).
+## Tradeoffs in the current system
 
-## Favicon
+These are deliberate or inherited limits of the stack as it exists today—not a roadmap.
 
-`web/public/favicon.svg` — referenced from root layout metadata.
+- **Data lives in your Turso account.** There is no application-managed backup, retention policy, or encryption story beyond what Turso provides. The repo does not ship a production dataset.
+
+- **Guest workspaces are cookie-bound.** The `prc_guest_sid` cookie is httpOnly and lasts about **180 days** (`guest-session.ts`). Clearing cookies or using another browser starts a new empty workspace. There is no in-app path to merge guest data into a Clerk account.
+
+- **Clerk and guest data never mix.** Rows are filtered by `clerkUserId` or `guestSessionId`; the same person cannot see both sets in one view without manual database work.
+
+- **Case rows are effectively append-only from the API.** You can list and fetch cases and create new ones; there is no supported HTTP path to edit note text, re-run the pipeline on an existing row, or delete a case through the app.
+
+- **Insights are derived in the browser** from whatever cases `GET /api/cases` already returned. They are not a separate warehouse or time-series view; large queues are limited by that single fetch and client memory.
+
+- **Upload path is browser-first.** PDF text uses **pdf.js** with the worker loaded from **unpkg**; image OCR uses **Tesseract** worker and WASM from **jsdelivr**. If those CDNs or the user’s network block those hosts, upload fails regardless of server health.
+
+- **Hard cap on upload size:** **`CLIENT_INGEST_MAX_BYTES`** is **6 MB** (`extract-document-client.ts`). Larger files are rejected before extraction.
+
+- **PDFs are text-layer extraction only.** If a PDF is mostly scans, pdf.js often yields little text; the UI warns and suggests an image upload or paste. There is no server-side raster OCR for PDFs.
+
+- **Image OCR is English (`eng`) and runs entirely in the tab.** Quality depends on resolution, skew, and handwriting; low engine confidence surfaces a warning. CPU and battery cost sit on the client.
+
+- **Server sees note text as JSON, not raw files.** That suits serverless limits and avoids multipart pipelines, but it means large payloads go through the request body and whatever body-size limits your host applies.
+
+- **Scoring when LLM keys exist uses a fixed blend:** **55% rules, 45% model** on the numeric score (`full-clinical-pipeline.ts`). That weighting is a product choice, not a calibrated clinical model. If the model call throws, the pipeline **falls back to rules only** with no surfaced error to the end user.
+
+- **Provider cascade** (`analyzeNotes`): **Groq → Gemini → OpenAI → rules**, but only when a stage **throws**. Groq’s client path can **return the rules engine** on malformed JSON instead of throwing, so Gemini/OpenAI keys may sit unused in the same request.
+
+- **Third-party models process PHI you choose to submit.** Keys live in server environment variables; traffic goes to whichever providers you configure. There is no on-prem model option in this codebase.
+
+- **Signal extraction is pattern-based** (`clinical-signals.ts`, `rules.ts`). It will miss paraphrases, structured feeds, and nuance that humans catch, and it can over-trigger on noisy prose.
+
+- **“Review state” and pipeline trace are explanatory** (`review-state.ts`, trace builders). They do not replace human review, policy, or instrument validation.
+
+- **FHIR-shaped bundles are for display and inspection** (`fhir-inspired-types.ts`). They are not emitted by a certified FHIR server and should not be treated as interoperable clinical records.
+
+- **Demo samples are static** (`demo-cases.ts`). **Load samples** only applies when the workspace queue is empty (`seed-demo` route); it does not refresh or version those rows.
+
+---
+
+## Tests
+
+From **`web/`**: **`npm test`** (Vitest). Extraction, enrichment, review heuristics, rules, and the full pipeline are covered with LLM keys stripped in CI-style runs.
